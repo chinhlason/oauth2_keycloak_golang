@@ -6,7 +6,7 @@ import (
 )
 
 type IRepository interface {
-	Save(id, name, email, password, role string, createdAt, updatedAt time.Time) error
+	Save(id, username, email, password, fullname, role string, createdAt, updatedAt time.Time) error
 	Get(id string) (*User, error)
 	Update(data UpdateUserDTO) error
 	ChangePassword(id, password string) error
@@ -20,11 +20,12 @@ func NewRepository(db *gorm.DB) IRepository {
 	return &Repository{db}
 }
 
-func (r *Repository) Save(id, name, email, password, role string, createdAt, updatedAt time.Time) error {
+func (r *Repository) Save(id, username, email, password, fullname, role string, createdAt, updatedAt time.Time) error {
 	user := User{
 		ID:        id,
-		Username:  name,
+		Username:  username,
 		Email:     email,
+		FullName:  fullname,
 		Password:  password,
 		Role:      role,
 		CreatedAt: createdAt,

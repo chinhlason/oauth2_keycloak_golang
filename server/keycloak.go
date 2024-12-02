@@ -24,12 +24,13 @@ var (
 type IKeyCloak interface {
 	GetAdminToken() (*TokenResponse, error)
 	CreateRealms(realms []string) error
-	CreateUser(realm string, req *CreateUserRequest, password string) error
+	CreateUser(realm string, req *CreateUserRequest, password string) (string, error)
 	SetPassword(id string, password string) error
 	GetUserToken(username, password string) (*TokenResponse, error)
 	IntrospectToken(token string) (*UserInfoResponse, error)
 	RefreshToken(refreshToken string) (*TokenResponse, error)
 	UpdateUserInfo(id string, req *UpdateUserInfo) error
+	GetUserByEmail(email string) (*UserResponse, error)
 }
 
 type KeyCloakClient struct {
@@ -161,51 +162,56 @@ func (c *KeyCloakClient) CreateRealms(realms []string) error {
 	return nil
 }
 
-func (c *KeyCloakClient) CreateUser(realm string, req *CreateUserRequest, password string) error {
+func (c *KeyCloakClient) CreateUser(realm string, req *CreateUserRequest, password string) (string, error) {
 	token, err := c.GetAdminToken()
 	if err != nil {
-		return err
+		return "", err
+	}
+
+	if password == "default" && realm == "default" {
+		password = os.Getenv("DEFAULT_PASSWORD")
+		realm = os.Getenv("KEYCLOAK_REALM")
 	}
 
 	urlStr := fmt.Sprintf("%s/admin/realms/%s/users", c.addr, realm)
 
 	bodyJson, err := json.Marshal(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	request, err := http.NewRequest("POST", urlStr, strings.NewReader(string(bodyJson)))
 	if err != nil {
-		return err
+		return "", err
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.AccessToken))
 
 	response, err := c.client.Do(request)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	if response.StatusCode != http.StatusCreated {
-		return errors.New(string(body))
+		return "", errors.New(string(body))
 	}
 
 	location := response.Header.Get("Location")
 	if location == "" {
-		return errors.New("failed to create user")
+		return "", errors.New("failed to create user")
 	}
 
 	id := strings.Split(location, "/")[len(strings.Split(location, "/"))-1]
 	if err = c.SetPassword(id, password); err != nil {
-		return err
+		return "", err
 	}
 
 	defer response.Body.Close()
-	return nil
+	return id, nil
 }
 
 func (c *KeyCloakClient) SetPassword(id string, password string) error {
@@ -246,6 +252,10 @@ func (c *KeyCloakClient) SetPassword(id string, password string) error {
 
 func (c *KeyCloakClient) GetUserToken(username, password string) (*TokenResponse, error) {
 	urlStr := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token", c.addr, os.Getenv("KEYCLOAK_REALM"))
+
+	if password == "default" {
+		password = os.Getenv("DEFAULT_PASSWORD")
+	}
 
 	form := url.Values{}
 	form.Add("client_id", os.Getenv("KEYCLOAK_CLIENT_ID"))
@@ -385,6 +395,49 @@ func (c *KeyCloakClient) UpdateUserInfo(id string, req *UpdateUserInfo) error {
 	return nil
 }
 
+func (c *KeyCloakClient) GetUserByEmail(email string) (*UserResponse, error) {
+	token, err := c.GetAdminToken()
+	if err != nil {
+		return nil, err
+	}
+
+	urlStr := fmt.Sprintf("%s/admin/realms/%s/users?email=%s", c.addr, os.Getenv("KEYCLOAK_REALM"), email)
+
+	request, err := http.NewRequest("GET", urlStr, nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.AccessToken))
+
+	response, err := c.client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+
+	if response.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(response.Body)
+		if err != nil {
+			return nil, err
+		}
+		return nil, errors.New(string(body))
+	}
+
+	var result []UserResponse
+	err = json.NewDecoder(response.Body).Decode(&result)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, user := range result {
+		if user.Email == email {
+			return &user, nil
+		}
+	}
+
+	return nil, errors.New("user not found")
+}
+
 type TokenResponse struct {
 	AccessToken           string `json:"access_token"`
 	ExpiredIn             int    `json:"expires_in"`
@@ -433,4 +486,12 @@ type UpdateUserInfo struct {
 	LastName  string `json:"lastName"`
 	Email     string `json:"email"`
 	Enabled   bool   `json:"enabled"`
+}
+
+type UserResponse struct {
+	Id        string `json:"id"`
+	Username  string `json:"username"`
+	FirstName string `json:"firstName"`
+	LastName  string `json:"lastName"`
+	Email     string `json:"email"`
 }

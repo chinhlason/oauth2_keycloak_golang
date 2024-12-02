@@ -2,6 +2,9 @@ package main
 
 import (
 	"github.com/redis/go-redis/v9"
+	"github.com/rs/cors"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
 	"log"
 	"net/http"
 	server "oauth2"
@@ -10,6 +13,7 @@ import (
 
 var (
 	KEYCLOAK_HOST = "http://localhost:8080"
+	DSN           = "keycloak:keycloak@tcp(localhost:3306)/keycloak?parseTime=true"
 )
 
 func main() {
@@ -19,8 +23,15 @@ func main() {
 		DB:       0,
 	})
 
+	db, err := gorm.Open(mysql.Open(DSN), &gorm.Config{})
+	if err != nil {
+		log.Fatal("error connecting to database ", err)
+	}
+
 	keycloakClient := server.NewKeyCloakClient(KEYCLOAK_HOST, 10*time.Second, rdb)
-	handler := server.NewHandler(keycloakClient)
+	repo := server.NewRepository(db)
+	service := server.NewService(keycloakClient, repo)
+	handler := server.NewHandler(service)
 	errChan := make(chan error)
 
 	go func() {
@@ -31,17 +42,17 @@ func main() {
 		log.Println(err)
 	}
 
-	middleware := server.NewMiddleware(keycloakClient)
+	http.HandleFunc("/callback", handler.LoginWithGoogle)
 
-	http.HandleFunc("/admin/token", handler.GetAdminTokenHandler)
-	http.HandleFunc("/realms", handler.CreateRealms)
-	http.HandleFunc("/create", handler.CreateUser)
-	http.HandleFunc("/set-password", handler.SetPassword)
-	http.HandleFunc("/user/token", handler.GetUserToken)
-	http.HandleFunc("/introspect", handler.IntrospectToken)
-	http.HandleFunc("/refresh", handler.RefreshToken)
-	http.Handle("/update", middleware.ValidateToken(http.HandlerFunc(handler.UpdateUserInfo)))
+	//middleware := server.NewMiddleware(keycloakClient)
+
+	corsHandler := cors.New(cors.Options{
+		AllowedOrigins:   []string{"*"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE"},
+		AllowedHeaders:   []string{"*"},
+		AllowCredentials: true,
+	}).Handler(http.DefaultServeMux)
 
 	log.Println("server started at :2901...")
-	log.Fatal(http.ListenAndServe(":2901", nil))
+	log.Fatal(http.ListenAndServe(":2901", corsHandler))
 }
