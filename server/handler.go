@@ -7,6 +7,7 @@ import (
 
 type IHandler interface {
 	LoginWithGoogle(w http.ResponseWriter, r *http.Request)
+	Logout(w http.ResponseWriter, r *http.Request)
 }
 
 type Handler struct {
@@ -32,4 +33,19 @@ func (h *Handler) LoginWithGoogle(w http.ResponseWriter, r *http.Request) {
 	responseJson, _ := json.Marshal(token)
 	w.WriteHeader(http.StatusOK)
 	w.Write(responseJson)
+}
+
+func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
+	refreshToken, err := r.Cookie("refresh_token")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	err = h.service.Logout(refreshToken.Value)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Logout success"))
 }

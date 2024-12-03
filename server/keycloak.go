@@ -31,6 +31,8 @@ type IKeyCloak interface {
 	RefreshToken(refreshToken string) (*TokenResponse, error)
 	UpdateUserInfo(id string, req *UpdateUserInfo) error
 	GetUserByEmail(email string) (*UserResponse, error)
+	DeleteUser(id string) error
+	Logout(refreshToken string) error
 }
 
 type KeyCloakClient struct {
@@ -436,6 +438,68 @@ func (c *KeyCloakClient) GetUserByEmail(email string) (*UserResponse, error) {
 	}
 
 	return nil, errors.New("user not found")
+}
+
+func (c *KeyCloakClient) DeleteUser(id string) error {
+	token, err := c.GetAdminToken()
+	if err != nil {
+		return err
+	}
+
+	urlStr := fmt.Sprintf("%s/admin/realms/%s/users/%s", c.addr, os.Getenv("KEYCLOAK_REALM"), id)
+
+	request, err := http.NewRequest("DELETE", urlStr, nil)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.AccessToken))
+
+	response, err := c.client.Do(request)
+	if err != nil {
+		return err
+	}
+
+	if response.StatusCode != http.StatusNoContent {
+		body, err := io.ReadAll(response.Body)
+		if err != nil {
+			return err
+		}
+		return errors.New(string(body))
+	}
+
+	defer response.Body.Close()
+	return nil
+}
+
+func (c *KeyCloakClient) Logout(refreshToken string) error {
+	endpoint := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/logout", c.addr, os.Getenv("KEYCLOAK_REALM"))
+
+	form := url.Values{}
+	form.Add("client_id", os.Getenv("KEYCLOAK_CLIENT_ID"))
+	form.Add("refresh_token", refreshToken)
+
+	request, err := http.NewRequest("POST", endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	response, err := c.client.Do(request)
+	if err != nil {
+		return err
+	}
+
+	if response.StatusCode != http.StatusNoContent {
+		body, err := io.ReadAll(response.Body)
+		if err != nil {
+			return err
+		}
+		return errors.New(string(body))
+	}
+
+	return nil
 }
 
 type TokenResponse struct {

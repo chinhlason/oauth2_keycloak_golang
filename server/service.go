@@ -12,6 +12,9 @@ const (
 
 type IService interface {
 	LoginWithGoogle(token string) (*TokenResponse, error)
+	Register(username, email, password, firstName, lastName string) error
+	Login(username, password string) (*TokenResponse, error)
+	Logout(refreshToken string) error
 }
 
 type Service struct {
@@ -68,4 +71,50 @@ func (s *Service) LoginWithGoogle(token string) (*TokenResponse, error) {
 		return nil, err
 	}
 	return tokenResp, nil
+}
+
+func (s *Service) Register(username, email, password, firstName, lastName string) error {
+	req := &CreateUserRequest{
+		Username:      username,
+		Email:         email,
+		FirstName:     firstName,
+		LastName:      lastName,
+		Enabled:       true,
+		EmailVerified: false,
+	}
+
+	id, err := s.keyCloakClient.CreateUser(DEFAULT_VALUE, req, DEFAULT_VALUE)
+	if err != nil {
+		return err
+	}
+
+	err = s.repository.Save(id, username, email, password, fmt.Sprintf("%s %s", firstName, lastName), DEFAULT_ROLE, time.Now(), time.Now())
+	if err != nil {
+		//Rollback keycloak
+		err2 := Retry(3, 500*time.Millisecond, func() error {
+			return s.keyCloakClient.DeleteUser(id)
+		})
+		if err2 != nil {
+			return err2
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Service) Login(username, password string) (*TokenResponse, error) {
+	_, err := s.repository.Get(username)
+	if err != nil {
+		return nil, err
+	}
+
+	token, err := s.keyCloakClient.GetUserToken(username, password)
+	if err != nil {
+		return nil, err
+	}
+	return token, nil
+}
+
+func (s *Service) Logout(refreshToken string) error {
+	return s.keyCloakClient.Logout(refreshToken)
 }
